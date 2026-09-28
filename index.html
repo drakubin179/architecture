@@ -1,0 +1,713 @@
+import { MediaItem } from 'flow-sdk';
+export type SpaceType = 'auto' | 'exterior' | 'interior' | 'floor_plan';
+export interface MaterialSettings {
+  walls: string;
+  floors: string;
+  ceilings: string;
+  wood: string;
+  stone: string;
+  metal: string;
+  glass: string;
+  fabric: string;
+}
+export interface LightingSettings {
+  mode: 'reference' | 'daylight' | 'cloudy' | 'golden_hour' | 'twilight' | 'night';
+  intensity: number; // 0-100
+  tone: 'warm' | 'neutral' | 'cool';
+}
+export interface RenderSettings {
+  spaceType: SpaceType;
+  priorityPreservation: boolean;
+  materialMode: 'original' | 'custom';
+  materials: MaterialSettings;
+  lighting: LightingSettings;
+  contextDesc: string;
+  additionalPrompt: string;
+  aspectRatio: '16:9' | '9:16' | '1:1' | '4:3' | '3:4';
+}
+export interface HistoryItem {
+  id: string;
+  timestamp: number;
+  resultMediaId: string;
+  resultBase64: string;
+  resultMimeType: string;
+  settings: RenderSettings;
+  prompt: string;
+}
+export interface ReferenceImage extends MediaItem {
+  note: string;
+}
+import { RenderSettings } from '../types';
+export function constructPrompt(settings: RenderSettings): string {
+  const parts: string[] = [];
+  // 1. Base style and preservation
+  parts.push("Professional architectural photography, high-end realistic rendering, hyper-realistic, 8k resolution, highly detailed.");
+  
+  if (settings.priorityPreservation) {
+    parts.push("Strictly follow the original geometry, structure, camera angle, and layout from the source image. Maintain all architectural details like pillars, windows, and furniture positions exactly.");
+  }
+  // 2. Space Type
+  const spaceMap = {
+    auto: "",
+    exterior: "Modern architectural exterior building visualization.",
+    interior: "High-end interior design visualization.",
+    floor_plan: "3D architectural floor plan, isometric perspective view from above."
+  };
+  parts.push(spaceMap[settings.spaceType]);
+  // 3. Materials
+  if (settings.materialMode === 'custom') {
+    const mat = settings.materials;
+    if (mat.walls) parts.push(`Walls and facade: ${mat.walls}.`);
+    if (mat.floors) parts.push(`Flooring: ${mat.floors}.`);
+    if (mat.ceilings) parts.push(`Ceiling: ${mat.ceilings}.`);
+    if (mat.wood) parts.push(`Woodwork and cabinetry: ${mat.wood}.`);
+    if (mat.stone) parts.push(`Stone and marble surfaces: ${mat.stone}.`);
+    if (mat.metal) parts.push(`Metal elements and railings: ${mat.metal}.`);
+    if (mat.glass) parts.push(`Glass windows and transparency: ${mat.glass}.`);
+    if (mat.fabric) parts.push(`Fabrics, curtains, and upholstery: ${mat.fabric}.`);
+  } else {
+    parts.push("Enhance and photorealize the existing materials and colors shown in the original image.");
+  }
+  // 4. Lighting
+  const lightMap = {
+    reference: "Adopt lighting and atmosphere from reference image.",
+    daylight: "Natural bright daylight, soft shadows.",
+    cloudy: "Overcast sky, diffuse lighting, minimal shadows.",
+    golden_hour: "Golden hour sunset lighting, warm long shadows, dramatic sun glow.",
+    twilight: "Blue hour twilight, architectural accent lighting glowing, soft sky.",
+    night: "Night scene, artificial architectural lighting, dark sky, reflective surfaces."
+  };
+  parts.push(lightMap[settings.lighting.mode]);
+  parts.push(`${settings.lighting.tone} color temperature.`);
+  // 5. Context
+  if (settings.contextDesc) {
+    parts.push(`Environment/Context: ${settings.contextDesc}.`);
+  }
+  // 6. User Prompt
+  if (settings.additionalPrompt) {
+    parts.push(`Additional requirements: ${settings.additionalPrompt}.`);
+  }
+  // 7. Quality constraints
+  parts.push("No distortion, no added floors, no moving furniture, consistent wood grain, natural reflections, clean edges.");
+  return parts.filter(Boolean).join(" ");
+}
+import React, { useState, useRef, useEffect } from 'react';
+interface ComparisonViewProps {
+  beforeUrl: string | null;
+  afterUrl: string | null;
+}
+export const ComparisonView: React.FC<ComparisonViewProps> = ({ beforeUrl, afterUrl }) => {
+  const [sliderPos, setSliderPos] = useState(50);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const handleMove = (e: React.MouseEvent | React.TouchEvent) => {
+    if (!containerRef.current) return;
+    const rect = containerRef.current.getBoundingClientRect();
+    const x = 'touches' in e ? e.touches[0].clientX : e.clientX;
+    const position = ((x - rect.left) / rect.width) * 100;
+    setSliderPos(Math.min(Math.max(position, 0), 100));
+  };
+  if (!afterUrl) {
+    return (
+      <div className="w-full h-full bg-slate-950 flex items-center justify-center rounded-xl overflow-hidden border border-slate-800">
+        {beforeUrl ? (
+          <img src={beforeUrl} className="max-w-full max-h-full object-contain" alt="Original" />
+        ) : (
+          <div className="text-slate-500 flex flex-col items-center gap-4">
+            <span className="material-symbols-outlined text-6xl opacity-20">architecture</span>
+            <p className="text-sm">Chưa có ảnh để hiển thị</p>
+          </div>
+        )}
+      </div>
+    );
+  }
+  return (
+    <div 
+      ref={containerRef}
+      className="relative w-full h-full bg-slate-950 rounded-xl overflow-hidden cursor-col-resize select-none border border-slate-800"
+      onMouseMove={(e) => e.buttons === 1 && handleMove(e)}
+      onTouchMove={handleMove}
+      onMouseDown={handleMove}
+    >
+      {/* After Image (Background) */}
+      <img src={afterUrl} className="absolute inset-0 w-full h-full object-contain" alt="After" />
+      {/* Before Image (Clipping) */}
+      <div 
+        className="absolute inset-0 w-full h-full overflow-hidden border-r-2 border-white/50 shadow-2xl"
+        style={{ width: `${sliderPos}%` }}
+      >
+        {beforeUrl && (
+          <img 
+            src={beforeUrl} 
+            className="absolute inset-0 h-full object-contain" 
+            style={{ width: containerRef.current?.clientWidth || '100vw' }}
+            alt="Before" 
+          />
+        )}
+      </div>
+      {/* Labels */}
+      <div className="absolute top-4 left-4 px-2 py-1 bg-black/50 text-white text-[10px] uppercase tracking-widest rounded backdrop-blur-sm border border-white/10">SketchUp</div>
+      <div className="absolute top-4 right-4 px-2 py-1 bg-indigo-600/80 text-white text-[10px] uppercase tracking-widest rounded backdrop-blur-sm border border-white/10">Rendered</div>
+      {/* Handle */}
+      <div 
+        className="absolute top-0 bottom-0 w-1 bg-white cursor-col-resize"
+        style={{ left: `${sliderPos}%` }}
+      >
+        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-8 h-8 bg-white rounded-full shadow-lg flex items-center justify-center">
+          <span className="material-symbols-outlined text-slate-900 text-sm">unfold_more</span>
+        </div>
+      </div>
+    </div>
+  );
+};
+    import React from 'react';
+import { RenderSettings, SpaceType } from '../types';
+interface ControlPanelProps {
+  settings: RenderSettings;
+  setSettings: (s: RenderSettings) => void;
+}
+export const ControlPanel: React.FC<ControlPanelProps> = ({ settings, setSettings }) => {
+  const updateSetting = (key: keyof RenderSettings, value: any) => {
+    setSettings({ ...settings, [key]: value });
+  };
+  const updateMaterial = (key: keyof RenderSettings['materials'], value: string) => {
+    setSettings({
+      ...settings,
+      materials: { ...settings.materials, [key]: value }
+    });
+  };
+  const updateLighting = (key: keyof RenderSettings['lighting'], value: any) => {
+    setSettings({
+      ...settings,
+      lighting: { ...settings.lighting, [key]: value }
+    });
+  };
+  const sectionClass = "mb-6 p-4 bg-slate-800/50 rounded-lg border border-slate-700/50";
+  const labelClass = "block text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-2";
+  const inputClass = "w-full bg-slate-900 border border-slate-700 rounded px-3 py-2 text-sm text-white focus:border-indigo-500 outline-none transition-colors";
+  const selectClass = "w-full bg-slate-900 border border-slate-700 rounded px-3 py-2 text-sm text-white focus:border-indigo-500 outline-none transition-colors";
+  return (
+    <div className="space-y-4">
+      {/* Space Type */}
+      <div className={sectionClass}>
+        <label className={labelClass}>Loại không gian</label>
+        <div className="grid grid-cols-2 gap-2">
+          {(['auto', 'exterior', 'interior', 'floor_plan'] as SpaceType[]).map((t) => (
+            <button
+              key={t}
+              onClick={() => updateSetting('spaceType', t)}
+              className={`px-3 py-2 rounded text-xs font-medium border transition-all ${
+                settings.spaceType === t 
+                ? 'bg-indigo-600 border-indigo-400 text-white' 
+                : 'bg-slate-900 border-slate-700 text-slate-400 hover:border-slate-500'
+              }`}
+            >
+              {t === 'auto' && 'Tự nhận diện'}
+              {t === 'exterior' && 'Ngoại thất'}
+              {t === 'interior' && 'Nội thất'}
+              {t === 'floor_plan' && 'Mặt bằng 3D'}
+            </button>
+          ))}
+        </div>
+      </div>
+      {/* Preservation Toggle */}
+      <div className={sectionClass}>
+        <div className="flex items-center justify-between">
+          <label className={labelClass}>Bảo toàn thiết kế gốc</label>
+          <button 
+            onClick={() => updateSetting('priorityPreservation', !settings.priorityPreservation)}
+            className={`w-10 h-5 rounded-full relative transition-colors ${settings.priorityPreservation ? 'bg-indigo-600' : 'bg-slate-700'}`}
+          >
+            <div className={`absolute top-1 w-3 h-3 bg-white rounded-full transition-all ${settings.priorityPreservation ? 'left-6' : 'left-1'}`} />
+          </button>
+        </div>
+        <p className="text-[10px] text-slate-500 mt-2 italic">Mặc định giữ nguyên hình khối, cửa và vị trí đồ đạc từ SketchUp.</p>
+      </div>
+      {/* Materials */}
+      <div className={sectionClass}>
+        <label className={labelClass}>Vật liệu</label>
+        <div className="flex gap-2 mb-3">
+          <button
+            onClick={() => updateSetting('materialMode', 'original')}
+            className={`flex-1 py-1.5 rounded text-[10px] font-bold uppercase ${settings.materialMode === 'original' ? 'bg-slate-200 text-slate-900' : 'bg-slate-900 text-slate-400'}`}
+          >
+            Giữ nguyên
+          </button>
+          <button
+            onClick={() => updateSetting('materialMode', 'custom')}
+            className={`flex-1 py-1.5 rounded text-[10px] font-bold uppercase ${settings.materialMode === 'custom' ? 'bg-slate-200 text-slate-900' : 'bg-slate-900 text-slate-400'}`}
+          >
+            Tùy chỉnh
+          </button>
+        </div>
+        {settings.materialMode === 'custom' && (
+          <div className="space-y-3 mt-4">
+            <div>
+              <label className="text-[10px] text-slate-500 mb-1 block">Tường & Mặt tiền</label>
+              <input value={settings.materials.walls} onChange={e => updateMaterial('walls', e.target.value)} className={inputClass} placeholder="Gạch ốp trắng, mờ..." />
+            </div>
+            <div>
+              <label className="text-[10px] text-slate-500 mb-1 block">Sàn</label>
+              <input value={settings.materials.floors} onChange={e => updateMaterial('floors', e.target.value)} className={inputClass} placeholder="Gỗ sồi, vân ngang..." />
+            </div>
+            <div>
+              <label className="text-[10px] text-slate-500 mb-1 block">Hệ tủ (Gỗ)</label>
+              <input value={settings.materials.wood} onChange={e => updateMaterial('wood', e.target.value)} className={inputClass} placeholder="MDF Melamine xám..." />
+            </div>
+          </div>
+        )}
+      </div>
+      {/* Lighting */}
+      <div className={sectionClass}>
+        <label className={labelClass}>Ánh sáng & Bối cảnh</label>
+        <select 
+          value={settings.lighting.mode} 
+          onChange={e => updateLighting('mode', e.target.value)}
+          className={selectClass}
+        >
+          <option value="daylight">Ban ngày, nắng nhẹ</option>
+          <option value="cloudy">Trời nhiều mây (Soft shadow)</option>
+          <option value="golden_hour">Giờ vàng (Nắng chiều)</option>
+          <option value="twilight">Chạng vạng (Blue hour)</option>
+          <option value="night">Ban đêm</option>
+          <option value="reference">Theo ảnh tham chiếu</option>
+        </select>
+        
+        <div className="mt-4 flex gap-2">
+          {(['warm', 'neutral', 'cool'] as const).map(t => (
+            <button
+              key={t}
+              onClick={() => updateLighting('tone', t)}
+              className={`flex-1 py-1 rounded text-[10px] border transition-colors ${
+                settings.lighting.tone === t ? 'border-amber-500 bg-amber-500/10 text-amber-500' : 'border-slate-700 text-slate-500'
+              }`}
+            >
+              {t === 'warm' && 'Ấm'}
+              {t === 'neutral' && 'Trung tính'}
+              {t === 'cool' && 'Lạnh'}
+            </button>
+          ))}
+        </div>
+      </div>
+      {/* Context Description */}
+      <div className={sectionClass}>
+        <label className={labelClass}>Bối cảnh xung quanh</label>
+        <textarea 
+          value={settings.contextDesc} 
+          onChange={e => updateSetting('contextDesc', e.target.value)}
+          className={`${inputClass} min-h-[60px] resize-none text-xs`}
+          placeholder="Ví dụ: Phố hiện đại, nhiều cây xanh, vỉa hè rộng..."
+        />
+      </div>
+      {/* Extra Prompt */}
+      <div className={sectionClass}>
+        <label className={labelClass}>Yêu cầu bổ sung</label>
+        <textarea 
+          value={settings.additionalPrompt} 
+          onChange={e => updateSetting('additionalPrompt', e.target.value)}
+          className={`${inputClass} min-h-[60px] resize-none text-xs`}
+          placeholder="Nhập thêm các chi tiết đặc biệt khác..."
+        />
+      </div>
+      {/* Aspect Ratio */}
+      <div className={sectionClass}>
+        <label className={labelClass}>Tỷ lệ khung hình</label>
+        <div className="grid grid-cols-3 gap-2">
+          {(['16:9', '9:16', '1:1', '4:3', '3:4'] as const).map(ratio => (
+            <button
+              key={ratio}
+              onClick={() => updateSetting('aspectRatio', ratio)}
+              className={`py-1 rounded text-[10px] border transition-all ${
+                settings.aspectRatio === ratio ? 'border-indigo-500 bg-indigo-500/10 text-white' : 'border-slate-700 text-slate-500'
+              }`}
+            >
+              {ratio}
+            </button>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+};
+          import React, { useState, useEffect, useCallback } from 'react';
+import { Flow, MediaItem } from 'flow-sdk';
+import { 
+  RenderSettings, 
+  HistoryItem, 
+  ReferenceImage, 
+  SpaceType 
+} from './types';
+import { ControlPanel } from './components/ControlPanel';
+import { ComparisonView } from './components/ComparisonView';
+import { constructPrompt } from './lib/prompter';
+const DEFAULT_SETTINGS: RenderSettings = {
+  spaceType: 'auto',
+  priorityPreservation: true,
+  materialMode: 'original',
+  materials: {
+    walls: '',
+    floors: '',
+    ceilings: '',
+    wood: '',
+    stone: '',
+    metal: '',
+    glass: '',
+    fabric: ''
+  },
+  lighting: {
+    mode: 'daylight',
+    intensity: 80,
+    tone: 'neutral'
+  },
+  contextDesc: '',
+  additionalPrompt: '',
+  aspectRatio: '16:9'
+};
+export default function App() {
+  const [originalImage, setOriginalImage] = useState<MediaItem | null>(null);
+  const [referenceImages, setReferenceImages] = useState<ReferenceImage[]>([]);
+  const [settings, setSettings] = useState<RenderSettings>(DEFAULT_SETTINGS);
+  const [history, setHistory] = useState<HistoryItem[]>([]);
+  const [currentResult, setCurrentResult] = useState<HistoryItem | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [showPromptPreview, setShowPromptPreview] = useState(false);
+  const [showIntro, setShowIntro] = useState(true);
+  // Load history from state if needed (not persistent across reloads but helpful for current session)
+  
+  const handleSelectOriginal = async () => {
+    try {
+      const media = await Flow.media.select({ filter: 'image' });
+      setOriginalImage(media);
+    } catch (e) {
+      console.error(e);
+    }
+  };
+  const handleAddReference = async () => {
+    try {
+      const media = await Flow.media.select({ filter: 'image' });
+      setReferenceImages([...referenceImages, { ...media, note: '' }]);
+    } catch (e) {
+      console.error(e);
+    }
+  };
+  const handleRemoveReference = (id: string) => {
+    setReferenceImages(referenceImages.filter(r => r.mediaId !== id));
+  };
+  const handleUpdateRefNote = (id: string, note: string) => {
+    setReferenceImages(referenceImages.map(r => r.mediaId === id ? { ...r, note } : r));
+  };
+  const handleRender = async () => {
+    if (!originalImage) {
+      setError("Vui lòng tải lên ảnh SketchUp gốc trước khi render.");
+      return;
+    }
+    setLoading(true);
+    setError(null);
+    const prompt = constructPrompt(settings);
+    try {
+      // Collect all relevant reference IDs
+      const refIds = [originalImage.mediaId, ...referenceImages.map(r => r.mediaId)];
+      
+      const result = await Flow.generate.image({
+        prompt: prompt,
+        referenceImageMediaIds: refIds,
+        aspectRatio: settings.aspectRatio,
+        modelDisplayName: '🍌 Nano Banana Pro'
+      });
+      const newItem: HistoryItem = {
+        id: Date.now().toString(),
+        timestamp: Date.now(),
+        resultMediaId: result.mediaId,
+        resultBase64: result.base64,
+        resultMimeType: result.mimeType,
+        settings: { ...settings },
+        prompt: prompt
+      };
+      setHistory([newItem, ...history]);
+      setCurrentResult(newItem);
+    } catch (err: any) {
+      setError(`Lỗi render: ${err.message || 'Không rõ nguyên nhân'}`);
+    } finally {
+      setLoading(false);
+    }
+  };
+  const handleDownload = async () => {
+    if (!currentResult) return;
+    try {
+      await Flow.download({
+        base64: currentResult.resultBase64,
+        mimeType: currentResult.resultMimeType,
+        filename: `Architectural_Render_${Date.now()}.png`
+      });
+    } catch (e) {
+      console.error(e);
+    }
+  };
+  const handleCopySettings = () => {
+    const code = btoa(JSON.stringify(settings));
+    navigator.clipboard.writeText(code);
+    alert("Đã sao chép mã thiết lập vào bộ nhớ tạm.");
+  };
+  const handlePasteSettings = async () => {
+    const code = prompt("Dán mã thiết lập đã sao chép:");
+    if (!code) return;
+    try {
+      const decoded = JSON.parse(atob(code));
+      setSettings(decoded);
+    } catch (e) {
+      alert("Mã thiết lập không hợp lệ.");
+    }
+  };
+  const activePrompt = constructPrompt(settings);
+  return (
+    <div className="flex h-full w-full bg-slate-900 text-slate-200 overflow-hidden font-sans">
+      {/* Intro Modal */}
+      {showIntro && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-6 bg-black/80 backdrop-blur-md">
+          <div className="bg-slate-800 border border-slate-700 rounded-2xl max-w-lg w-full p-8 shadow-2xl animate-in zoom-in-95 duration-300">
+            <div className="flex items-center gap-4 mb-6">
+              <div className="w-12 h-12 bg-indigo-600 rounded-xl flex items-center justify-center">
+                <span className="material-symbols-outlined text-white text-3xl">architecture</span>
+              </div>
+              <div>
+                <h1 className="text-2xl font-bold text-white">Architectural Render Studio</h1>
+                <p className="text-slate-400 text-sm italic">Thiết kế bởi Google Flow</p>
+              </div>
+            </div>
+            
+            <div className="space-y-4 text-slate-300 mb-8">
+              <p>Chào mừng bạn đến với Studio diễn họa kiến trúc chuyên nghiệp. Công cụ này giúp bạn biến các ảnh xuất thô từ SketchUp thành hình ảnh 3D chân thực.</p>
+              <ul className="space-y-2 text-sm">
+                <li className="flex items-start gap-2">
+                  <span className="material-symbols-outlined text-indigo-400 text-lg">check_circle</span>
+                  <span>Bảo toàn tối đa hình khối, vị trí đồ đạc và góc nhìn gốc.</span>
+                </li>
+                <li className="flex items-start gap-2">
+                  <span className="material-symbols-outlined text-indigo-400 text-lg">check_circle</span>
+                  <span>Kiểm soát chi tiết vật liệu: gỗ, đá, kính, vải...</span>
+                </li>
+                <li className="flex items-start gap-2">
+                  <span className="material-symbols-outlined text-indigo-400 text-lg">check_circle</span>
+                  <span>Môi trường ánh sáng linh hoạt (Bình minh, Chạng vạng, Đèn nội thất).</span>
+                </li>
+              </ul>
+            </div>
+            <button 
+              onClick={() => setShowIntro(false)}
+              className="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-3 rounded-xl transition-all shadow-[0_0_20px_rgba(79,70,229,0.3)]"
+            >
+              Bắt đầu thiết kế
+            </button>
+          </div>
+        </div>
+      )}
+      {/* Sidebar - Settings (Left) */}
+      <aside className="w-80 h-full border-r border-slate-800 flex flex-col bg-slate-900/50">
+        <div className="p-4 border-b border-slate-800 flex justify-between items-center">
+          <h2 className="font-bold text-xs uppercase tracking-widest text-slate-400 flex items-center gap-2">
+            <span className="material-symbols-outlined text-sm">tune</span>
+            Thông số thiết lập
+          </h2>
+          <button onClick={() => setSettings(DEFAULT_SETTINGS)} className="text-[10px] text-slate-500 hover:text-white uppercase">Mặc định</button>
+        </div>
+        
+        <div className="flex-1 overflow-y-auto custom-scrollbar p-4">
+          {/* Inputs Section */}
+          <div className="mb-6 space-y-4">
+             <label className="block text-[11px] font-bold text-slate-400 uppercase tracking-wider">Ảnh đầu vào</label>
+             
+             {/* Original */}
+             <button 
+               onClick={handleSelectOriginal}
+               className={`w-full aspect-video rounded-lg border-2 border-dashed flex flex-col items-center justify-center gap-2 transition-all group relative overflow-hidden ${
+                 originalImage ? 'border-indigo-500/50 bg-indigo-500/5' : 'border-slate-700 hover:border-slate-500 bg-slate-800/30'
+               }`}
+             >
+               {originalImage ? (
+                 <>
+                   <img src={`data:${originalImage.mimeType};base64,${originalImage.base64}`} className="absolute inset-0 w-full h-full object-cover" />
+                   <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity">
+                     <span className="text-[10px] text-white font-bold bg-indigo-600 px-2 py-1 rounded">Đổi ảnh SketchUp</span>
+                   </div>
+                 </>
+               ) : (
+                 <>
+                   <span className="material-symbols-outlined text-slate-600 group-hover:text-slate-400 text-3xl">add_photo_alternate</span>
+                   <span className="text-[10px] font-bold uppercase text-slate-500">Ảnh SketchUp gốc</span>
+                 </>
+               )}
+             </button>
+             {/* References */}
+             <div className="space-y-2">
+               <div className="flex justify-between items-center">
+                 <label className="text-[10px] font-bold text-slate-500 uppercase">Ảnh tham chiếu ({referenceImages.length})</label>
+                 <button onClick={handleAddReference} className="material-symbols-outlined text-indigo-400 hover:text-indigo-300 text-lg">add_circle</button>
+               </div>
+               
+               <div className="grid grid-cols-4 gap-2">
+                 {referenceImages.map(ref => (
+                   <div key={ref.mediaId} className="relative aspect-square rounded bg-slate-800 border border-slate-700 group overflow-hidden">
+                     <img src={`data:${ref.mimeType};base64,${ref.base64}`} className="w-full h-full object-cover" />
+                     <button 
+                       onClick={() => handleRemoveReference(ref.mediaId)}
+                       className="absolute top-0 right-0 p-0.5 bg-red-600/80 text-white opacity-0 group-hover:opacity-100 transition-opacity"
+                     >
+                       <span className="material-symbols-outlined text-[12px]">close</span>
+                     </button>
+                   </div>
+                 ))}
+               </div>
+             </div>
+          </div>
+          <ControlPanel settings={settings} setSettings={setSettings} />
+        </div>
+        <div className="p-4 border-t border-slate-800 space-y-2">
+           <div className="flex gap-2">
+             <button onClick={handleCopySettings} className="flex-1 py-2 text-[10px] font-bold bg-slate-800 text-slate-400 rounded hover:bg-slate-700 transition-colors flex items-center justify-center gap-1">
+               <span className="material-symbols-outlined text-sm">content_copy</span> SAO CHÉP
+             </button>
+             <button onClick={handlePasteSettings} className="flex-1 py-2 text-[10px] font-bold bg-slate-800 text-slate-400 rounded hover:bg-slate-700 transition-colors flex items-center justify-center gap-1">
+               <span className="material-symbols-outlined text-sm">content_paste</span> DÁN MÃ
+             </button>
+           </div>
+           
+           <button 
+             onClick={handleRender}
+             disabled={loading || !originalImage}
+             className={`w-full py-3 rounded-xl font-bold flex items-center justify-center gap-2 transition-all shadow-lg ${
+               loading || !originalImage 
+               ? 'bg-slate-800 text-slate-600 cursor-not-allowed' 
+               : 'bg-indigo-600 hover:bg-indigo-500 text-white shadow-indigo-500/20 active:scale-[0.98]'
+             }`}
+           >
+             {loading ? (
+               <>
+                 <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                 ĐANG RENDER...
+               </>
+             ) : (
+               <>
+                 <span className="material-symbols-outlined">auto_fix_high</span>
+                 RENDER ẢNH
+               </>
+             )}
+           </button>
+        </div>
+      </aside>
+      {/* Main View (Center) */}
+      <main className="flex-1 h-full flex flex-col relative bg-[#0a0a0c]">
+        {/* Toolbar */}
+        <header className="h-14 border-b border-white/5 flex items-center justify-between px-6 bg-slate-900/30 backdrop-blur-md">
+           <div className="flex items-center gap-4">
+             <div className="flex items-center gap-2 text-indigo-400 font-bold tracking-tight">
+               <span className="material-symbols-outlined">architecture</span>
+               Architectural Render Studio
+             </div>
+             {currentResult && (
+               <div className="h-4 w-[1px] bg-slate-700 mx-2" />
+             )}
+             <button 
+               onClick={() => setShowPromptPreview(!showPromptPreview)}
+               className="text-[10px] text-slate-500 hover:text-white uppercase flex items-center gap-1"
+             >
+               <span className="material-symbols-outlined text-sm">visibility</span>
+               {showPromptPreview ? 'Ẩn' : 'Xem'} câu lệnh AI
+             </button>
+           </div>
+           <div className="flex items-center gap-3">
+             <button onClick={() => setShowIntro(true)} className="p-2 hover:bg-white/5 rounded-full transition-colors text-slate-400">
+               <span className="material-symbols-outlined">help_outline</span>
+             </button>
+             {currentResult && (
+               <button 
+                 onClick={handleDownload}
+                 className="flex items-center gap-2 bg-slate-100 hover:bg-white text-slate-900 px-4 py-1.5 rounded-full text-xs font-bold transition-all shadow-md"
+               >
+                 <span className="material-symbols-outlined text-sm">download</span>
+                 TẢI ẢNH
+               </button>
+             )}
+           </div>
+        </header>
+        {/* Workspace */}
+        <div className="flex-1 p-6 flex flex-col gap-6 overflow-hidden">
+          {/* Main Display Area */}
+          <div className="flex-1 relative min-h-0">
+             {error && (
+               <div className="absolute top-4 left-1/2 -translate-x-1/2 z-20 px-4 py-2 bg-red-500 text-white rounded-lg shadow-xl flex items-center gap-2 text-sm">
+                 <span className="material-symbols-outlined">error</span>
+                 {error}
+                 <button onClick={() => setError(null)} className="ml-2 hover:opacity-70"><span className="material-symbols-outlined text-sm">close</span></button>
+               </div>
+             )}
+             {showPromptPreview && (
+               <div className="absolute inset-x-0 top-0 z-20 p-4 bg-slate-800/95 backdrop-blur border-b border-slate-700 shadow-2xl animate-in slide-in-from-top duration-300">
+                 <p className="text-[10px] font-bold text-indigo-400 mb-2 uppercase">AI Prompt (English generated from settings)</p>
+                 <code className="text-xs text-slate-300 block bg-slate-950 p-3 rounded border border-slate-700 leading-relaxed">
+                   {activePrompt}
+                 </code>
+               </div>
+             )}
+             <ComparisonView 
+               beforeUrl={originalImage ? `data:${originalImage.mimeType};base64,${originalImage.base64}` : null} 
+               afterUrl={currentResult ? `data:${currentResult.resultMimeType};base64,${currentResult.resultBase64}` : null} 
+             />
+          </div>
+          {/* Results History (Bottom) */}
+          {history.length > 0 && (
+            <div className="h-32 flex flex-col gap-2">
+              <h3 className="text-[10px] font-bold text-slate-500 uppercase flex items-center gap-1">
+                <span className="material-symbols-outlined text-sm">history</span>
+                Lịch sử phiên bản ({history.length})
+              </h3>
+              <div className="flex gap-4 overflow-x-auto pb-2 custom-scrollbar">
+                {history.map(item => (
+                  <button 
+                    key={item.id}
+                    onClick={() => setCurrentResult(item)}
+                    className={`shrink-0 aspect-video h-20 rounded border-2 transition-all relative group ${
+                      currentResult?.id === item.id ? 'border-indigo-500 ring-2 ring-indigo-500/20' : 'border-transparent hover:border-slate-600'
+                    }`}
+                  >
+                    <img src={`data:${item.resultMimeType};base64,${item.resultBase64}`} className="w-full h-full object-cover rounded-sm" />
+                    <div className="absolute bottom-0 inset-x-0 bg-black/60 py-0.5 text-[8px] text-white opacity-0 group-hover:opacity-100 transition-opacity">
+                      {new Date(item.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                    </div>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+        {/* Global Progress Bar */}
+        {loading && (
+          <div className="absolute bottom-0 inset-x-0 h-1 bg-indigo-900/20 z-30">
+            <div className="h-full bg-indigo-500 animate-[loading-bar_2s_infinite]" />
+          </div>
+        )}
+      </main>
+      {/* Global Style overrides */}
+      <style>{`
+        @keyframes loading-bar {
+          0% { width: 0%; left: 0%; }
+          50% { width: 50%; left: 25%; }
+          100% { width: 0%; left: 100%; }
+        }
+        .custom-scrollbar::-webkit-scrollbar {
+          width: 4px;
+          height: 4px;
+        }
+        .custom-scrollbar::-webkit-scrollbar-track {
+          background: transparent;
+        }
+        .custom-scrollbar::-webkit-scrollbar-thumb {
+          background: #334155;
+          border-radius: 10px;
+        }
+        .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+          background: #475569;
+        }
+      `}</style>
+    </div>
+  );
+}
